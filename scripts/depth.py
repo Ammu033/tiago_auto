@@ -60,7 +60,7 @@ class YoloSegNode:
         # We sync them so each RGB frame has matching depth frame
         # -------------------------------------------------------
         rgb_sub   = message_filters.Subscriber('/xtion/rgb/image_raw',   Image)
-        depth_sub = message_filters.Subscriber('/xtion/depth/image_raw', Image)
+        depth_sub = message_filters.Subscriber('/xtion/depth_registered/image_raw', Image)
 
         # ApproximateTimeSynchronizer syncs RGB and depth by timestamp
         # slop=0.1 means 100ms tolerance between frames
@@ -92,19 +92,28 @@ class YoloSegNode:
     # -------------------------------------------------------
     def terminal_input(self):
         while not rospy.is_shutdown():
-            try:
-                if self.detected_tables:
-                    user_input = input("\n[INPUT] Enter table number to navigate to: ")
+            if self.detected_tables and not self.navigating:
+            # Print tables clearly
+                print(f"\n[INFO] I can see {len(self.detected_tables)} table(s):")
+                for idx, t in enumerate(self.detected_tables):
+                     print(f"  Table {idx+1} | Depth: {t['depth']:.2f}m")
+            
+            # Now ask for input
+                try:
+                    user_input = input("\n[INPUT] Enter table number to go to: ")
                     table_num  = int(user_input)
 
                     if 1 <= table_num <= len(self.detected_tables):
-                        self.selected_table = self.detected_tables[table_num - 1]
-                        rospy.loginfo(f"[INFO] Navigating to Table {table_num}!")
-                        self.navigate_to_table(self.selected_table)
+                        selected = self.detected_tables[table_num - 1]
+                        rospy.loginfo(f"[INFO] Going to Table {table_num} at {selected['depth']:.2f}m!")
+                        self.navigate_to_table(selected)
                     else:
-                        rospy.logwarn(f"[WARN] Invalid table number! Choose between 1 and {len(self.detected_tables)}")
-            except ValueError:
-                rospy.logwarn("[WARN] Please enter a valid number!")
+                        print(f"[WARN] Please choose between 1 and {len(self.detected_tables)}")
+
+                except ValueError:
+                    print("[WARN] Enter a valid number!")
+            else:
+                rospy.sleep(0.5)
 
     # -------------------------------------------------------
     # Navigate to selected table using depth data
@@ -188,7 +197,7 @@ class YoloSegNode:
     # Main callback — runs every time RGB + Depth frames arrive
     # -------------------------------------------------------
     def image_callback(self, rgb_msg, depth_msg):
-        rospy.loginfo("[DEBUG] Image received!")
+        
 
         try:
             # Convert ROS messages to OpenCV
@@ -197,8 +206,7 @@ class YoloSegNode:
 
             # Convert depth to float32 in meters
             # Xtion gives depth in millimeters so divide by 1000
-            depth_frame = depth_frame.astype(np.float32) / 1000.0
-
+            depth_frame = np.array(depth_frame, dtype=np.float32)
             # Run YOLO inference
             results = self.model.predict(source=frame, conf=0.25, verbose=False)
 
@@ -226,6 +234,7 @@ class YoloSegNode:
                         # Use median depth of masked region to avoid noise
                         # -------------------------------------------------------
                         depth_values = depth_frame[binary == 1]
+                        depth_values = depth_values[np.isfinite(depth_values)]
                         depth_values = depth_values[depth_values > 0]  # remove zeros/invalid
 
                         if len(depth_values) == 0:
@@ -258,12 +267,8 @@ class YoloSegNode:
             self.detected_tables = tables
             self.table_detected  = len(tables) > 0
 
-            if len(tables) > 0:
-                rospy.loginfo(f"[INFO] I can see {len(tables)} table(s) (left to right):")
-                for idx, t in enumerate(tables):
-                    rospy.loginfo(f"  Table {idx+1} | Depth: {t['depth']:.2f}m | CenterX: {t['cx']}px")
-            else:
-                rospy.loginfo("[DEBUG] No tables detected")
+            
+           
 
             # Publish binary mask
             mask_msg        = self.bridge.cv2_to_imgmsg(combined_mask, encoding='mono8')

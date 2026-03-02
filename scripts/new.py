@@ -23,7 +23,7 @@ class YoloSegNode:
         # Load YOLO segmentation model
         # -------------------------------------------------------
         rospy.loginfo("[INFO] Loading YOLO model...")
-        self.model = YOLO('yolov8n-seg.pt')
+        self.model = YOLO('yolov8x-seg.pt')
         rospy.loginfo("[INFO] Model loaded!")
 
         # CvBridge converts between ROS Image messages and OpenCV images
